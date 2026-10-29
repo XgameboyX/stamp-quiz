@@ -60,6 +60,14 @@
   .hint-list{margin:0 0 24px;padding-left:20px;color:var(--ink-soft);font-size:14px;line-height:1.95}
   .hint-list b{color:var(--ink)}
   .tiny{font-size:12px;color:#9a8a74;margin:18px 0 0;line-height:1.7}
+  .join{display:flex;gap:10px;align-items:center;margin:0 0 16px;flex-wrap:wrap}
+  .join label{font-size:13px;color:var(--ink-soft);white-space:nowrap}
+  .join input{flex:1 1 200px;min-width:0;font:inherit;font-size:15px;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;background:#fff;color:var(--ink)}
+  .join input:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px rgba(185,146,47,.14)}
+  .rank-line{margin-top:12px;font-size:14px;color:var(--ink-soft)}
+  .rank-line b{font-size:24px;color:var(--red);font-family:"Songti SC","SimSun",serif;margin:0 3px}
+  .board-link{display:inline-block;margin-top:8px;font-size:13px;color:var(--ink-soft);text-decoration:underline}
+  .board-link:hover{color:var(--ink)}
 
   /* ---------- 顶栏 ---------- */
   .hud{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;flex-wrap:wrap}
@@ -176,6 +184,11 @@
         <li>背景音乐在你点「开始抢答」后响起（浏览器要求先有一次点击），右上角可分别关掉音效与音乐。</li>
       </ul>
 
+      <div class="join" id="joinRow" hidden>
+        <label for="nick">昵称</label>
+        <input id="nick" maxlength="12" placeholder="填个昵称，成绩才会进排行榜" autocomplete="off" spellcheck="false">
+      </div>
+
       <button id="startBtn" class="btn primary" disabled>正在加载邮票…</button>
       <p class="tiny">题目图片均由你提供的 6 张邮票照片，仅用于识别练习。</p>
     </div>
@@ -245,6 +258,8 @@
         <div class="big"><span id="finalScore">0</span><small> / 1200</small></div>
         <div class="meta" id="finalMeta"></div>
         <div class="verdict" id="finalVerdict"></div>
+        <div class="rank-line" id="rankLine" hidden></div>
+        <div><a class="board-link" id="boardLink" href="board.html" target="_blank" hidden>查看大屏排行榜 →</a></div>
       </div>
       <div class="review" id="review"></div>
       <div class="end-actions">
@@ -323,7 +338,8 @@
     feedback: $('#feedback'), fbHead: $('#fbHead'), fbName: $('#fbName'), fbNote: $('#fbNote'),
     nextBtn: $('#nextBtn'),
     finalScore: $('#finalScore'), finalMeta: $('#finalMeta'), finalVerdict: $('#finalVerdict'),
-    review: $('#review')
+    review: $('#review'),
+    joinRow: $('#joinRow'), nick: $('#nick'), rankLine: $('#rankLine'), boardLink: $('#boardLink')
   };
 
   var state = {
@@ -334,6 +350,55 @@
 
   el.ringFg.style.strokeDasharray = CIRC.toFixed(2);
   el.ringFg.style.strokeDashoffset = '0';
+
+  /* ---------------- 联机模式（同一局域网里跑了 server.ps1 才有） ---------------- */
+  var NET = { on: false, sid: null, name: '', submitted: false };
+
+  function initNet(){
+    try{
+      fetch('api/session', { cache: 'no-store' })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(d){
+          if(!d || !d.id) return;
+          NET.on = true; NET.sid = d.id;
+          el.joinRow.hidden = false;
+          el.boardLink.hidden = false;
+          try{ el.nick.value = localStorage.getItem('stampNick') || ''; }catch(e){}
+        })
+        .catch(function(){});
+    }catch(e){}
+  }
+
+  function refreshSid(){
+    if(!NET.on) return;
+    fetch('api/session', { cache: 'no-store' })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){ if(d && d.id) NET.sid = d.id; })
+      .catch(function(){});
+  }
+
+  function submitScore(){
+    if(!NET.on || NET.submitted) return;
+    NET.submitted = true;
+    el.rankLine.hidden = false;
+    el.rankLine.textContent = '正在上传成绩…';
+    fetch('api/score', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: NET.name || '选手',
+        score: state.score,
+        correct: state.correct,
+        ms: Date.now() - state.startedAt,
+        sid: NET.sid
+      })
+    }).then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(d){
+        if(!d || !d.rank){ el.rankLine.textContent = '成绩上传失败'; return; }
+        el.rankLine.innerHTML = '当前排第 <b>' + d.rank + '</b> 名 · 已参与 <b>' + d.total + '</b> 人';
+      })
+      .catch(function(){ el.rankLine.textContent = '成绩上传失败（网络中断）'; });
+  }
 
   /* ---------------- 音效（WebAudio 实时合成，无外部素材） ---------------- */
   var ac = null;
@@ -474,7 +539,18 @@
     audio();
     state.order = shuffle(QUESTIONS.map(function(_, i){ return i; }));
     state.i = -1; state.score = 0; state.correct = 0; state.log = []; state.streak = 0;
+    state.startedAt = Date.now();
+    NET.submitted = false;
+    if(NET.on){
+      var n = (el.nick.value || '').replace(/[<>&"']/g, '').trim().slice(0, 12);
+      NET.name = n || ('选手' + Math.floor(Math.random() * 9000 + 1000));
+      el.nick.value = NET.name;
+      try{ localStorage.setItem('stampNick', NET.name); }catch(e){}
+      refreshSid();
+    }
     el.score.textContent = '0';
+    el.rankLine.hidden = true;
+    el.rankLine.textContent = '';
     buildDots();
     el.start.classList.remove('active');
     el.end.classList.remove('active');
@@ -652,6 +728,7 @@
     renderReview();
     bgmFade(BGM_VOL);
     sfxFinish();
+    submitScore();
   }
 
   function renderReview(){
@@ -681,6 +758,8 @@
       el.review.appendChild(row);
     });
   }
+
+  initNet();
 
 })();
 </script>
