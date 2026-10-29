@@ -74,8 +74,9 @@
   .hud-right{display:flex;align-items:center;gap:10px}
   .score-box{font-size:13px;color:var(--ink-soft);border:1px solid var(--line);background:rgba(255,255,255,.65);padding:6px 14px;border-radius:999px;white-space:nowrap}
   .score-box b{font-size:19px;color:var(--ink);font-variant-numeric:tabular-nums;margin-left:4px}
-  .icon-btn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.65);cursor:pointer;font-size:16px;line-height:1;display:grid;place-items:center}
-  .icon-btn:hover{background:#fff}
+  .mini-btn{font:inherit;font-size:12px;letter-spacing:.02em;padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.65);color:var(--ink-soft);cursor:pointer;white-space:nowrap;transition:background .15s,color .15s,opacity .15s}
+  .mini-btn:hover{background:#fff;color:var(--ink)}
+  .mini-btn.off{opacity:.5;text-decoration:line-through}
 
   /* ---------- 主盘 ---------- */
   .board{display:grid;grid-template-columns:minmax(0,1.06fr) minmax(320px,.94fr);gap:clamp(14px,2.4vw,26px);align-items:start}
@@ -105,7 +106,6 @@
   .opt:hover:not(:disabled){transform:translateY(-1px);border-color:var(--gold);box-shadow:0 14px 24px -20px rgba(90,60,30,.9)}
   .opt .k{width:26px;height:26px;flex:0 0 auto;border-radius:6px;background:#f1e7d3;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--ink-soft)}
   .opt .txt b{display:block;font-size:16px;letter-spacing:.02em}
-  .opt .txt span{font-size:12px;color:var(--ink-soft)}
   .opt.correct{border-color:var(--green);background:#eef8f1}
   .opt.correct .k{background:var(--green);color:#fff}
   .opt.wrong{border-color:var(--red);background:#fdeeeb}
@@ -173,6 +173,7 @@
         <li>看票面判断它属于哪一类：<b>特种邮票</b>（志号带 <b>T</b>）、<b>纪念邮票</b>（志号带 <b>J</b>）、<b>普通邮票</b>（志号「普」或没有 T/J 志号）。</li>
         <li>每题限时 5 秒：5 秒内作答，答得越快加分越高；超时自动揭晓正确答案。</li>
         <li>键盘 <span class="kbd">1</span> <span class="kbd">2</span> <span class="kbd">3</span> 抢答，<span class="kbd">空格</span> 进入下一题。</li>
+        <li>背景音乐在你点「开始抢答」后响起（浏览器要求先有一次点击），右上角可分别关掉音效与音乐。</li>
       </ul>
 
       <button id="startBtn" class="btn primary" disabled>正在加载邮票…</button>
@@ -189,7 +190,8 @@
       </div>
       <div class="hud-right">
         <div class="score-box">得分<b id="score">0</b></div>
-        <button class="icon-btn" id="soundBtn" title="音效开关" aria-label="音效开关">🔊</button>
+        <button class="mini-btn" id="musicBtn" title="背景音乐开关">音乐 · 开</button>
+        <button class="mini-btn" id="soundBtn" title="音效开关">音效 · 开</button>
       </div>
     </div>
 
@@ -218,9 +220,9 @@
         <div class="ask">这套邮票属于哪一类？</div>
 
         <div class="options" id="options">
-          <button class="opt" data-key="T"><span class="k">1</span><span class="txt"><b>特种邮票</b><span>志号带 T</span></span></button>
-          <button class="opt" data-key="J"><span class="k">2</span><span class="txt"><b>纪念邮票</b><span>志号带 J</span></span></button>
-          <button class="opt" data-key="R"><span class="k">3</span><span class="txt"><b>普通邮票</b><span>志号「普」或无志号</span></span></button>
+          <button class="opt" data-key="T"><span class="k">1</span><span class="txt"><b>特种邮票</b></span></button>
+          <button class="opt" data-key="J"><span class="k">2</span><span class="txt"><b>纪念邮票</b></span></button>
+          <button class="opt" data-key="R"><span class="k">3</span><span class="txt"><b>普通邮票</b></span></button>
         </div>
 
         <div class="feedback" id="feedback">
@@ -253,6 +255,8 @@
   </section>
 
 </div>
+
+<audio id="bgm" src="audio/bgm.mp3" loop preload="auto"></audio>
 
 <script>
 (function(){
@@ -312,7 +316,7 @@
   var el = {
     start: $('#screen-start'), game: $('#screen-game'), end: $('#screen-end'),
     startBtn: $('#startBtn'), againBtn: $('#againBtn'),
-    qNo: $('#qNo'), dots: $('#dots'), score: $('#score'), soundBtn: $('#soundBtn'),
+    qNo: $('#qNo'), dots: $('#dots'), score: $('#score'), soundBtn: $('#soundBtn'), musicBtn: $('#musicBtn'),
     stampImg: $('#stampImg'), stampWrap: $('#stampWrap'),
     ringWrap: $('#ringWrap'), ringFg: $('#ringFg'), ringNum: $('#ringNum'), timerLabel: $('#timerLabel'),
     options: $('#options'), opts: Array.prototype.slice.call(document.querySelectorAll('.opt')),
@@ -323,7 +327,7 @@
   };
 
   var state = {
-    order: [], i: -1, score: 0, correct: 0,
+    order: [], i: -1, score: 0, correct: 0, streak: 0,
     playing: false, answered: false, log: [],
     raf: 0, t0: 0, remain: LIMIT, lastTick: 5, soundOn: true
   };
@@ -331,7 +335,7 @@
   el.ringFg.style.strokeDasharray = CIRC.toFixed(2);
   el.ringFg.style.strokeDashoffset = '0';
 
-  /* ---------------- 音效（WebAudio，无外部文件） ---------------- */
+  /* ---------------- 音效（WebAudio 实时合成，无外部素材） ---------------- */
   var ac = null;
   function audio(){
     if(!ac){
@@ -342,30 +346,74 @@
     if(ac.state === 'suspended') ac.resume();
     return ac;
   }
-  function tone(freq, dur, type, vol, delay){
+  function tone(freq, dur, type, vol, delay, glideTo){
     if(!state.soundOn) return;
     var c = audio(); if(!c) return;
     var t = c.currentTime + (delay || 0);
     var o = c.createOscillator(), g = c.createGain();
     o.type = type || 'sine';
-    o.frequency.value = freq;
+    o.frequency.setValueAtTime(freq, t);
+    if(glideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20, glideTo), t + dur);
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(vol || 0.05, t + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g); g.connect(c.destination);
     o.start(t); o.stop(t + dur + 0.03);
   }
-  function sfxTick(){ tone(760, 0.05, 'square', 0.025); }
-  function sfxRight(){ tone(660, 0.12, 'sine', 0.07, 0); tone(990, 0.2, 'sine', 0.06, 0.1); }
-  function sfxWrong(){ tone(196, 0.26, 'sawtooth', 0.045, 0); }
-  function sfxTimeout(){ tone(294, 0.13, 'triangle', 0.05, 0); tone(196, 0.22, 'triangle', 0.05, 0.13); }
-  function sfxFinish(){ tone(523, 0.14, 'sine', 0.06, 0); tone(659, 0.14, 'sine', 0.06, 0.13); tone(784, 0.28, 'sine', 0.06, 0.26); }
+  function chord(freqs, dur, type, vol, delay){
+    for(var i = 0; i < freqs.length; i++){
+      tone(freqs[i], dur, type, vol, (delay || 0) + i * 0.012);
+    }
+  }
+  function sfxTick(){ tone(1180, 0.045, 'square', 0.022); }                                  // 最后 3 秒滴答
+  function sfxStart(){ [523, 659, 784, 1046].forEach(function(f, i){ tone(f, 0.22, 'triangle', 0.05, i * 0.09); }); }  // 开局上行琶音
+  function sfxRight(){ chord([784, 988], 0.28, 'sine', 0.06, 0); tone(1568, 0.18, 'sine', 0.03, 0.1); }              // 答对
+  function sfxCombo(){ [1318, 1568, 1760].forEach(function(f, i){ tone(f, 0.12, 'triangle', 0.035, 0.18 + i * 0.06); }); } // 连对火花
+  function sfxWrong(){ tone(220, 0.3, 'sawtooth', 0.05, 0, 130); tone(110, 0.34, 'sine', 0.04, 0.02); }             // 答错
+  function sfxTimeout(){ tone(392, 0.16, 'triangle', 0.05, 0); tone(262, 0.28, 'triangle', 0.05, 0.16); }            // 超时
+  function sfxNext(){ tone(660, 0.09, 'sine', 0.03, 0, 990); }                                                       // 换题滑音
+  function sfxFinish(){ [523, 659, 784, 1046, 1318].forEach(function(f, i){ tone(f, 0.3, 'sine', 0.055, i * 0.13); }); } // 结算号角
 
   el.soundBtn.addEventListener('click', function(){
     state.soundOn = !state.soundOn;
-    el.soundBtn.textContent = state.soundOn ? '🔊' : '🔇';
+    el.soundBtn.textContent = state.soundOn ? '音效 · 开' : '音效 · 关';
+    el.soundBtn.classList.toggle('off', !state.soundOn);
     if(state.soundOn){ audio(); sfxTick(); }
   });
+
+  /* ---------------- 背景音乐 ---------------- */
+  var bgm = document.getElementById('bgm');
+  var musicOn = true;
+  var BGM_VOL = 0.16, BGM_DUCK = 0.05;
+
+  function bgmPlay(){
+    if(!musicOn || !bgm) return;
+    var p = bgm.play();
+    if(p && p.catch) p.catch(function(){});   // 自动播放被拒时静默忽略
+  }
+  function bgmFade(to){
+    if(!bgm) return;
+    clearInterval(bgm._fade);
+    var from = bgm.volume, steps = 12, i = 0;
+    bgm._fade = setInterval(function(){
+      i++;
+      bgm.volume = Math.max(0, Math.min(1, from + (to - from) * i / steps));
+      if(i >= steps) clearInterval(bgm._fade);
+    }, 22);
+  }
+  el.musicBtn.addEventListener('click', function(){
+    musicOn = !musicOn;
+    el.musicBtn.textContent = musicOn ? '音乐 · 开' : '音乐 · 关';
+    el.musicBtn.classList.toggle('off', !musicOn);
+    if(musicOn){ bgm.volume = BGM_VOL; bgmPlay(); } else { bgm.pause(); }
+  });
+
+  // 万一被浏览器自动播放策略拦下：之后任意一次点击/按键再补一次
+  function bgmRetry(){
+    if(musicOn && bgm && bgm.paused) bgmPlay();
+  }
+  document.addEventListener('pointerdown', bgmRetry);
+  document.addEventListener('keydown', bgmRetry);
 
   /* ---------------- 预加载 ---------------- */
   (function preload(){
@@ -425,12 +473,15 @@
   function startGame(){
     audio();
     state.order = shuffle(QUESTIONS.map(function(_, i){ return i; }));
-    state.i = -1; state.score = 0; state.correct = 0; state.log = [];
+    state.i = -1; state.score = 0; state.correct = 0; state.log = []; state.streak = 0;
     el.score.textContent = '0';
     buildDots();
     el.start.classList.remove('active');
     el.end.classList.remove('active');
     el.game.classList.add('active');
+    sfxStart();
+    bgm.volume = BGM_VOL;
+    bgmPlay();
     nextQuestion();
   }
 
@@ -438,6 +489,7 @@
     cancelAnimationFrame(state.raf);
     state.i++;
     if(state.i >= QUESTIONS.length){ endGame(); return; }
+    if(state.i > 0){ sfxNext(); bgmFade(BGM_VOL); }
 
     var q = QUESTIONS[state.order[state.i]];
     state.current = q;
@@ -518,8 +570,13 @@
       gained = 100 + Math.round(state.remain / 1000 * 20);
       state.score += gained;
       state.correct += 1;
+      state.streak = (state.streak || 0) + 1;
+    } else {
+      state.streak = 0;
     }
     state.log[state.i] = { ok: ok, pick: pick, gained: gained, q: q };
+
+    bgmFade(BGM_DUCK);
 
     el.score.textContent = String(state.score);
     el.ringWrap.classList.remove('danger');
@@ -529,7 +586,7 @@
 
     var head, cls;
     if(pick === null){ head = '超时未作答'; cls = 'to'; sfxTimeout(); }
-    else if(ok){ head = '答对了 +' + gained; cls = 'ok'; sfxRight(); }
+    else if(ok){ head = '答对了 +' + gained; cls = 'ok'; sfxRight(); if(state.streak >= 3) sfxCombo(); }
     else { head = '答错了'; cls = 'no'; sfxWrong(); }
 
     el.fbHead.innerHTML = '<span class="tag ' + cls + '">' + head + '</span>' +
@@ -593,6 +650,7 @@
 
     el.finalVerdict.textContent = verdict;
     renderReview();
+    bgmFade(BGM_VOL);
     sfxFinish();
   }
 
