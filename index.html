@@ -401,12 +401,24 @@
   }
 
   /* ---------------- 音效（WebAudio 实时合成，无外部素材） ---------------- */
-  var ac = null;
+  var SFX_GAIN = 2.1;               // 音效总增益（这次调大）
+  var ac = null, sfxBus = null;
   function audio(){
     if(!ac){
       var C = window.AudioContext || window.webkitAudioContext;
       if(!C) return null;
       ac = new C();
+      // 音效走独立总线：先放大，再过限幅器，音量拉大也不炸音
+      sfxBus = ac.createGain();
+      sfxBus.gain.value = SFX_GAIN;
+      var comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -16;
+      comp.knee.value = 12;
+      comp.ratio.value = 6;
+      comp.attack.value = 0.003;
+      comp.release.value = 0.18;
+      sfxBus.connect(comp);
+      comp.connect(ac.destination);
     }
     if(ac.state === 'suspended') ac.resume();
     return ac;
@@ -422,7 +434,8 @@
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(vol || 0.05, t + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(c.destination);
+    o.connect(g);
+    g.connect(sfxBus || c.destination);
     o.start(t); o.stop(t + dur + 0.03);
   }
   function chord(freqs, dur, type, vol, delay){
@@ -449,22 +462,12 @@
   /* ---------------- 背景音乐 ---------------- */
   var bgm = document.getElementById('bgm');
   var musicOn = true;
-  var BGM_VOL = 0.16, BGM_DUCK = 0.05;
+  var BGM_VOL = 0.09;              // 音乐调小；音效响的时候不再压低音乐
 
   function bgmPlay(){
     if(!musicOn || !bgm) return;
     var p = bgm.play();
     if(p && p.catch) p.catch(function(){});   // 自动播放被拒时静默忽略
-  }
-  function bgmFade(to){
-    if(!bgm) return;
-    clearInterval(bgm._fade);
-    var from = bgm.volume, steps = 12, i = 0;
-    bgm._fade = setInterval(function(){
-      i++;
-      bgm.volume = Math.max(0, Math.min(1, from + (to - from) * i / steps));
-      if(i >= steps) clearInterval(bgm._fade);
-    }, 22);
   }
   el.musicBtn.addEventListener('click', function(){
     musicOn = !musicOn;
@@ -565,7 +568,7 @@
     cancelAnimationFrame(state.raf);
     state.i++;
     if(state.i >= QUESTIONS.length){ endGame(); return; }
-    if(state.i > 0){ sfxNext(); bgmFade(BGM_VOL); }
+    if(state.i > 0) sfxNext();
 
     var q = QUESTIONS[state.order[state.i]];
     state.current = q;
@@ -652,7 +655,6 @@
     }
     state.log[state.i] = { ok: ok, pick: pick, gained: gained, q: q };
 
-    bgmFade(BGM_DUCK);
 
     el.score.textContent = String(state.score);
     el.ringWrap.classList.remove('danger');
@@ -726,7 +728,6 @@
 
     el.finalVerdict.textContent = verdict;
     renderReview();
-    bgmFade(BGM_VOL);
     sfxFinish();
     submitScore();
   }
